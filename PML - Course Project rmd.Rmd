@@ -1,0 +1,195 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Andrew Martinez"
+date: "4/10/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+# Getting the Data
+
+The following packages were used for this report:
+```{r, results='hide'}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+```
+
+```{r}
+set.seed(1000)
+
+trainlink <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testlink <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(trainlink), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testlink), na.strings=c("NA","#DIV/0!",""))
+```
+
+We'll want to partition our data and check the dimensions of the partitions
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+Training1 <- training[inTrain, ]
+Testing1 <- training[-inTrain, ]
+
+dim(Training1); dim(Testing1)
+```
+
+## Cleaning the Data
+
+To begin cleaning our data, we'll start by removing variables with variance near zero.
+```{r}
+nzv <- nearZeroVar(Training1, saveMetrics=TRUE)
+Training1 <- Training1[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(Testing1,saveMetrics=TRUE)
+Testing1 <- Testing1[,nzv$nzv==FALSE]
+```
+
+Followed by removing the first column of the training dataset
+```{r}
+Training1 <- Training1[c(-1)]
+```
+
+Next, we'll want to clean up our data containing too many NAs
+```{r}
+training2 <- Training1
+for(i in 1:length(Training1)) {
+        if( sum( is.na( Training1[, i] ) ) /nrow(Training1) >= .7) {
+                for(j in 1:length(training2)) {
+                        if( length( grep(names(Training1[i]), names(training2)[j]) ) == 1)  {
+                                training2 <- training2[ , -j]
+                        }   
+                } 
+        }
+}
+
+Training1 <- training2
+rm(training2)
+```
+
+We'll also want to transform our testing datasets by removing the 'classe' column and making sure our variables are in both datasets.
+```{r}
+clean1 <- colnames(Training1)
+clean2 <- colnames(Training1[, -58]) 
+Testing1 <- Testing1[clean1] 
+testing <- testing[clean2] 
+
+dim(Testing1)
+
+dim(testing)
+```
+
+Lastly, we'll want to force our data into the same type.
+```{r}
+for (i in 1:length(testing) ) {
+        for(j in 1:length(Training1)) {
+                if( length( grep(names(Training1[i]), names(testing)[j]) ) == 1)  {
+                        class(testing[j]) <- class(Training1[i])
+                }      
+        }      
+}
+
+testing <- rbind(Training1[2, -58] , testing)
+testing <- testing[-1,]
+```
+
+# Decision Tree Prediction
+```{r}
+set.seed(1000)
+fit1 <- rpart(classe ~ ., data=Training1, method="class")
+fancyRpartPlot(fit1)
+```
+
+```{r}
+predictions1 <- predict(fit1, Testing1, type = "class")
+treeMatrix <- confusionMatrix(predictions1, Testing1$classe)
+treeMatrix
+```
+
+```{r}
+plot(treeMatrix$table, col = treeMatrix$byClass, main = paste("Accuracy of Decision Tree =", round(treeMatrix$overall['Accuracy'], 4)))
+```
+
+# Random Forest Prediction
+```{r}
+set.seed(12345)
+modFitB1 <- randomForest(classe ~ ., data=Training1)
+prediction2 <- predict(modFitB1, Testing1, type = "class")
+rfMatrix <- confusionMatrix(prediction2, Testing1$classe)
+rfMatrix
+```
+
+```{r}
+plot(modFitB1)
+```
+
+```{r}
+plot(rfMatrix$table, col = treeMatrix$byClass, main = paste("Accuracy of Random Forest =", round(rfMatrix$overall['Accuracy'], 4)))
+```
+
+# Generalized Boosted Regression Prediction
+
+```{r}
+set.seed(12345)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1)
+
+gbmFit1 <- train(classe ~ ., data=Training1, method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+```
+
+```{r}
+gbmFinalModel <- gbmFit1$finalModel
+```
+
+```{r}
+gbmPredictionTestTest <- predict(gbmFit1, newdata=Testing1)
+gbmAccuracyTest <- confusionMatrix(gbmPredictionTestTest, Testing1$classe)
+gbmAccuracyTest
+```
+
+```{r}
+plot(gbmFit1, ylim=c(0.9, 1))
+```
+
+# Results on Test Data
+
+Random Forest gave us an accuracy of .9982 and was the most accuract of the three methods used. The expected out of sample error is 100 - 99.82 = 0.18%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
